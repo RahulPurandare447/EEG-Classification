@@ -1,0 +1,156 @@
+import mne
+import numpy as np
+
+# Apply a bandpass filter (1-40 Hz)
+eeg_data_filtered = []
+for eeg_signal in eeg_data:
+    # Create a RawArray object for filtering
+    info = mne.create_info(ch_names=["EEG" + str(i) for i in range(eeg_signal.shape[0])], 
+                           sfreq=256, ch_types="eeg")
+    raw = mne.io.RawArray(eeg_signal, info)
+    
+    # Filter the data (1-40 Hz)
+    raw.filter(1, 40)  # Bandpass filter
+    eeg_data_filtered.append(raw.get_data())  # Get the filtered data
+
+# At this point, eeg_data_filtered is a list of filtered EEG signals
+# Normalize data (zero mean, unit variance)
+eeg_data_normalized = []
+for eeg_signal in eeg_data_resampled:
+    # Normalize each channel (zero mean, unit variance)
+    normalized_signal = (eeg_signal - np.mean(eeg_signal, axis=1, keepdims=True)) / np.std(eeg_signal, axis=1, keepdims=True)
+    eeg_data_normalized.append(normalized_signal)
+
+# Now eeg_data_normalized contains the normalized EEG signals
+# Find the maximum length of the EEG signals
+max_len = max([eeg_signal.shape[1] for eeg_signal in eeg_data_normalized])
+
+# Pad the signals to the maximum length
+eeg_data_padded = []
+for eeg_signal in eeg_data_normalized:
+    # Pad with zeros to make each signal have the same length
+    padding = max_len - eeg_signal.shape[1]
+    padded_signal = np.pad(eeg_signal, ((0, 0), (0, padding)), mode='constant')
+    eeg_data_padded.append(padded_signal)
+
+# Now eeg_data_padded contains the padded EEG signals
+import torch.nn as nn
+import torch.optim as optim
+
+class SimpleRNNModel(nn.Module):
+    def _init_(self, input_size, hidden_size, output_size=1):
+        super(SimpleRNNModel, self)._init_()
+        self.rnn = nn.RNN(input_size=input_size, hidden_size=hidden_size, batch_first=True)
+        self.fc = nn.Linear(hidden_size, output_size)
+        self.sigmoid = nn.Sigmoid()
+
+    def forward(self, x):
+        # Pass through the RNN layer
+        out, _ = self.rnn(x)
+        # Take the last output from the RNN
+        out = out[:, -1, :]
+        # Pass it through the fully connected layer and apply sigmoid
+        out = self.fc(out)
+        out = self.sigmoid(out)
+        return out
+
+# Create the model
+input_size = X.shape[2]  # Number of features
+hidden_size = 32  # Number of hidden units in the RNN layer
+model = SimpleRNNModel(input_size, hidden_size)
+
+# Print the model architecture
+print(model)
+
+import torch
+import torch.nn as nn
+import torch.optim as optim
+
+class SimpleRNNModel(nn.Module):
+    def _init_(self, input_size, hidden_size, output_size=1):
+        super(SimpleRNNModel, self)._init_()
+        # Reduced number of units in the RNN layer (e.g., 16 units instead of 32)
+        self.rnn = nn.RNN(input_size=input_size, hidden_size=16, batch_first=True, dropout=0.4)  # Increased dropout
+        self.fc = nn.Linear(16, output_size)  # One fully connected layer with 16 units
+        self.sigmoid = nn.Sigmoid()
+
+    def forward(self, x):
+        # Forward pass through the RNN layer
+        out, _ = self.rnn(x)
+        # Take the last output of the RNN
+        out = out[:, -1, :]  # Extract the last time step output
+        # Pass through the fully connected layer and apply sigmoid
+        out = self.fc(out)
+        out = self.sigmoid(out)
+        return out
+
+# Define the model
+input_size = X.shape[2]  # Number of features in the input
+hidden_size = 16  # Reduced number of hidden units
+model = SimpleRNNModel(input_size, hidden_size)
+
+# Print the model architecture
+print(model)
+
+# Loss and optimizer
+criterion = nn.BCELoss()  # Binary Cross-Entropy Loss
+optimizer = optim.Adam(model.parameters(), lr=0.001)
+# Training function (same as before)
+def train_model(model, train_loader, val_loader, epochs=5):
+    best_val_loss = float('inf')
+    for epoch in range(epochs):
+        model.train()  # Set the model to training mode
+        running_loss = 0.0
+        correct = 0
+        total = 0
+
+        # Train the model
+        for inputs, labels in train_loader:
+            optimizer.zero_grad()  # Zero the gradients
+
+            # Forward pass
+            outputs = model(inputs)
+            loss = criterion(outputs.squeeze(), labels.float())  # Squeeze the output tensor to match labels
+            loss.backward()  # Backpropagation
+            optimizer.step()  # Update the model parameters
+
+            running_loss += loss.item()
+
+            # Calculate accuracy
+            predicted = (outputs.squeeze() > 0.5).float()  # Convert probabilities to binary labels
+            correct += (predicted == labels).sum().item()
+            total += labels.size(0)
+
+        # Calculate training loss and accuracy
+        train_loss = running_loss / len(train_loader)
+        train_accuracy = correct / total
+
+        # Validation phase
+        model.eval()  # Set the model to evaluation mode
+        val_loss = 0.0
+        correct = 0
+        total = 0
+
+        with torch.no_grad():  # Disable gradient computation for validation
+            for inputs, labels in val_loader:
+                outputs = model(inputs)
+                loss = criterion(outputs.squeeze(), labels.float())
+                val_loss += loss.item()
+
+                predicted = (outputs.squeeze() > 0.5).float()
+                correct += (predicted == labels).sum().item()
+                total += labels.size(0)
+
+        val_loss = val_loss / len(val_loader)
+        val_accuracy = correct / total
+
+        # Print training and validation results
+        print(f"Epoch [{epoch+1}/{epochs}], Train Loss: {train_loss:.4f}, Train Accuracy: {train_accuracy:.4f}, Val Loss: {val_loss:.4f}, Val Accuracy: {val_accuracy:.4f}")
+
+        # Save the model with the best validation loss
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            torch.save(model.state_dict(), "best_model.pth")
+
+# Train the model with the simplified architecture
+train_model(model, train_loader, val_loader, epochs=30)
