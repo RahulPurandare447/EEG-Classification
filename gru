@@ -1,0 +1,125 @@
+gru :import torch
+import torch.nn as nn
+import torch.optim as optim
+import numpy as np
+import streamlit as st
+import tempfile
+import os
+import mne
+
+# GRU Model for EEG Classification
+class GRUModel(nn.Module):
+    def _init_(self, input_size, hidden_size=64, output_size=1):
+        super(GRUModel, self)._init_()
+        
+        # GRU Layer
+        self.gru = nn.GRU(input_size=input_size, hidden_size=hidden_size, batch_first=True, dropout=0.4)
+        
+        # Fully Connected Layer for classification
+        self.fc1 = nn.Linear(hidden_size, 64)
+        self.fc2 = nn.Linear(64, output_size)
+        
+        # Sigmoid Activation for binary classification (Schizophrenia vs. Healthy)
+        self.sigmoid = nn.Sigmoid()
+
+    def forward(self, x):
+        # GRU layer
+        out, _ = self.gru(x)
+        
+        # Use the last hidden state for classification
+        out = out[:, -1, :]  # Get the last output of GRU (after the entire sequence)
+        
+        # Fully connected layers
+        out = torch.relu(self.fc1(out))
+        out = self.fc2(out)
+        
+        # Sigmoid for binary classification (0 or 1)
+        out = self.sigmoid(out)
+        return out
+
+# Streamlit App Layout
+st.title('GRU Model Prediction for EEG Schizophrenia Classification')
+
+# Upload the trained GRU model
+uploaded_model = st.file_uploader("Upload the trained GRU model file (.pth)", type=["pth"])
+
+if uploaded_model is not None:
+    # Save the uploaded model to a temporary file
+    temp_model_path = tempfile.mktemp() + '.pth'
+    with open(temp_model_path, 'wb') as f:
+        f.write(uploaded_model.getvalue())  # Save uploaded model file
+
+    # Load the trained GRU model
+    model = GRUModel(input_size=10, hidden_size=64)  # Adjust input_size based on your dataset
+    model.load_state_dict(torch.load(temp_model_path))  # Load model weights
+    model.eval()
+
+    st.write("Model loaded successfully!")
+
+    # Function to preprocess the uploaded EEG file
+    def preprocess_eeg(uploaded_file):
+        # Save the uploaded file to a temporary location
+        temp_dir = tempfile.mkdtemp()  # Create a temporary directory
+        temp_file_path = os.path.join(temp_dir, "temp_eeg_file.edf")
+
+        with open(temp_file_path, 'wb') as f:
+            f.write(uploaded_file.getvalue())  # Write the uploaded file to disk
+
+        # Now use the temporary file path to read the EEG data
+        try:
+            raw = mne.io.read_raw_edf(temp_file_path, preload=True)
+        except Exception as e:
+            st.write(f"Error reading the EDF file: {e}")
+            return None
+
+        raw.pick_types(eeg=True)
+        raw.filter(l_freq=1.0, h_freq=40.0)  # Bandpass filter
+        raw.resample(128)
+
+        # Set EEG reference
+        raw.set_eeg_reference('average', projection=True)
+        raw.apply_proj()
+
+        # Get the data as a NumPy array
+        data = raw.get_data()
+
+        # Assuming the input data is in the form (channels, samples) and needs to be reshaped for GRU
+        data = data.T  # Transpose to shape (samples, channels)
+
+        # Add an extra dimension for GRU compatibility (samples, time_steps, features)
+        data = data.reshape((data.shape[0], data.shape[1], 1))
+
+        # Convert to PyTorch tensor
+        tensor_data = torch.tensor(data, dtype=torch.float32)
+        return tensor_data
+
+    # Upload EEG file for prediction
+    uploaded_file = st.file_uploader("Upload an EEG file (.edf)", type=["edf"])
+
+    if uploaded_file is not None:
+        # Check if the file has .edf extension
+        file_name = uploaded_file.name
+        if file_name.lower().endswith(".edf"):
+            # Preprocess the uploaded EEG data
+            input_data = preprocess_eeg(uploaded_file)
+
+            if input_data is not None:
+                # Make prediction using the trained model
+                with torch.no_grad():
+                    output = model(input_data)
+                    prediction = output.item()  # Convert tensor output to a Python float
+
+                # Display the result
+                if prediction > 0.5:
+                    st.write(f"The model predicts: *Class 1 (Schizophrenia)* with a probability of {prediction:.2f}")
+                else:
+                    st.write(f"The model predicts: *Class 0 (Healthy)* with a probability of {prediction:.2f}")
+
+                # Show input file name
+                st.write(f"Uploaded file: {file_name}")
+                # Optionally, show some details of the EEG data (e.g., number of channels, etc.)
+                st.write(f"Number of channels: {input_data.shape[2]}")
+                st.write(f"Number of samples: {input_data.shape[0]}")
+
+        else:
+            st.write("Please upload a valid .edf file.")
